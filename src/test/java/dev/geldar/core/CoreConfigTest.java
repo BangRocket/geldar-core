@@ -1,0 +1,48 @@
+package dev.geldar.core;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+class CoreConfigTest {
+    @Test
+    void environmentOverridesFileAndDefaultsApply() {
+        Settings file = Settings.empty();
+        file.set("nats.url", "nats://file:4222");
+        file.set("shard", "fromfile");
+
+        CoreConfig fromFile = CoreConfig.load(file, k -> null);
+        assertEquals("nats://file:4222", fromFile.natsUrl());
+        assertEquals("fromfile", fromFile.shard());
+
+        Map<String, String> env = Map.of("GELDAR_NATS_URL", "nats://env:4222", "GELDAR_SHARD", "phase0");
+        CoreConfig fromEnv = CoreConfig.load(file, env::get);
+        assertEquals("nats://env:4222", fromEnv.natsUrl());
+        assertEquals("phase0", fromEnv.shard());
+
+        CoreConfig defaults = CoreConfig.load(Settings.empty(), k -> null);
+        assertEquals(CoreConfig.DEFAULT_NATS_URL, defaults.natsUrl());
+        assertEquals(10_000, defaults.queueCapacity());
+    }
+
+    @Test
+    void theRecipeGrantIsOffByDefaultAndOnWhenTheFlagIsSet() {
+        assertFalse(CoreConfig.load(Settings.empty(), k -> null).grantRecipesOnJoin());
+        Settings file = Settings.empty();
+        file.set("recipes.grant_on_join", true);
+        assertTrue(CoreConfig.load(file, k -> null).grantRecipesOnJoin());
+    }
+
+    @Test
+    void shardNamesThatAreNotSubjectTokensFailAtLoad() {
+        for (String bad : new String[] {"a", "Phase0", "phase.0", "phase 0", "0phase", "x*", ">", "a".repeat(33)}) {
+            Map<String, String> env = Map.of("GELDAR_SHARD", bad);
+            assertThrows(IllegalArgumentException.class, () -> CoreConfig.load(Settings.empty(), env::get), bad);
+        }
+        assertEquals("phase0", CoreConfig.load(Settings.empty(), k -> null).shard());
+    }
+}

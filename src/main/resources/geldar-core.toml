@@ -1,0 +1,72 @@
+# Geldar-Core settings. GELDAR_NATS_URL and GELDAR_SHARD in the environment override nats.url and shard.
+# The keys are those of the Paper plugin's config.yml. The file is read again every 5 seconds; each section says
+# whether a change takes effect then or at the next start.
+
+shard = "phase0"
+tps_interval_seconds = 20
+
+[nats]
+url = "nats://nats:4222"
+
+[queue]
+capacity = 10000
+
+[recipes]
+# Recipes unlock through play (decision 0048). true grants every recipe on join, for a test shard only.
+grant_on_join = false
+
+[gravestones]
+# A stone-brick block with a sign where an agent character dies. No loot: drops are unchanged. Read at start only.
+enabled = true
+max_per_chunk = 4
+
+[lakitu]
+# The Lakitu camera feed (decision 0100). Off until the owner confirms decisions 0075 and 0077.
+# Values above their maximum are clamped at start and logged once.
+enabled = false
+radius_chunks = 4
+max_sections_per_frame = 256
+max_updates_per_frame = 512
+max_panes_per_session = 4
+frame_hz = 5
+
+[kino]
+# The Kino data feed (decision 0075). Off by default; false is the kill switch. Applied within 5 seconds.
+enabled = false
+# Horizontal view radius in chunks (1 to 8, default 5). Within 4 chunks, sections are read 6 above the agent and 1
+# below; beyond 4 chunks, 2 above and 2 below. Sections are read nearest-first. Read at start only.
+radius_chunks = 5
+
+[maintenance]
+# Server lines to the online players for a maintenance notice (CD-1), from geldar.<shard>.maintenance.
+# false turns the broadcast off. Applied within 5 seconds.
+broadcast = true
+
+[blockowner]
+# Who placed the block that is there now, answered from the mod's own record (kept with each chunk).
+# false stops the change events and the query replies; the Body then reads every chunk as unknown. The record
+# itself is kept either way. Applied within 5 seconds.
+enabled = true
+# A lookup that runs longer than this answers an empty list with truncated true.
+lookup_timeout_ms = 2000
+# true logs at INFO one summary line per chunk lookup and one per answer (base owners, overlay change), at most
+# 20 lines a minute. No player names. false (default) logs nothing extra.
+debug = false
+
+[chat.muffle]
+# Muffled hearing (decision 0199). Chat words reach a listener by effective distance: clear to 32 blocks, muffled to
+# 32 + margin (the words are removed and the agent gets a heard_muffled notice), silent beyond. Read at start only.
+# Blocks added on top of the 32-block clear limit that still count as muffled. A value below 0 is set to 0, and a
+# value that is not a finite number is set to the default 8; each change is logged once.
+margin = 8.0
+# Blocks added to the effective distance of a listener inside a sealed room (a solid block above, before open sky).
+# Below 0 is set to 0; not a finite number is set to the default 4.0.
+sealed_penalty = 4.0
+# Block reads allowed for one chat line, across every listener. Below 1 is set to 1. A listener silenced by the cap
+# hears nothing; the cap is logged as a count, never with the words.
+per_line_cap = 512
+# Block reads allowed for one listener's ray or roof scan. Below 1 is set to 1.
+per_ray_cap = 64
+# BENCH ONLY (MH-8a): true logs one INFO line per chat line (muffle-bench: speaker, tick, listeners, reads, capHit,
+# ns). For the throwaway bench shard. It must stay false in production.
+bench_log = false

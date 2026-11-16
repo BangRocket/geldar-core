@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://geldar.dev/schemas/common.schema.json",
+  "$defs": {
+    "SnapshotId": {
+      "type": "string",
+      "pattern": "^sn_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "ThoughtId": {
+      "type": "string",
+      "pattern": "^th_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "IntentId": {
+      "type": "string",
+      "pattern": "^in_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "ActionId": {
+      "type": "string",
+      "pattern": "^ac_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "ReceiptId": {
+      "type": "string",
+      "pattern": "^rc_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "EventId": {
+      "type": "string",
+      "pattern": "^ev_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "JobId": {
+      "type": "string",
+      "pattern": "^jb_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "LifeId": {
+      "description": "Permanent identity of one life, such as ag_kestrel_01.",
+      "type": "string",
+      "pattern": "^ag_[a-z][a-z0-9]{0,15}_[0-9]{2,}$"
+    },
+    "Position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "integer", "minimum": -30000000, "maximum": 30000000 },
+        "y": { "type": "integer", "minimum": -64, "maximum": 320 },
+        "z": { "type": "integer", "minimum": -30000000, "maximum": 30000000 }
+      }
+    },
+    "SelfPosition": {
+      "description": "A Position plus the biome the body stands in. Written out in full, since additionalProperties: false does not combine with allOf.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "integer", "minimum": -30000000, "maximum": 30000000 },
+        "y": { "type": "integer", "minimum": -64, "maximum": 320 },
+        "z": { "type": "integer", "minimum": -30000000, "maximum": 30000000 },
+        "biome": { "type": "string", "pattern": "^[a-z_]{1,64}$" }
+      }
+    },
+    "ItemName": {
+      "description": "An item ID without its namespace prefix, such as iron_ingot.",
+      "type": "string",
+      "pattern": "^[a-z0-9_]{1,64}$"
+    },
+    "CompassPoint": {
+      "description": "One of eight compass points, world-fixed: n is -z, s is +z, e is +x, w is -x.",
+      "type": "string",
+      "enum": ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
+    },
+    "ItemStack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item", "count"],
+      "properties": {
+        "item": { "$ref": "#/$defs/ItemName" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "wear": {
+          "description": "Durability state of a tool or armour piece: low below 50 percent used, worn from 50, nearly_broken from 90. Absent for items without durability.",
+          "type": "string",
+          "enum": ["low", "worn", "nearly_broken"]
+        },
+        "edible": {
+          "description": "True when the item is food the agent can eat. Absent when the Body does not report it.",
+          "type": "boolean"
+        },
+        "book_id": {
+          "description": "Set for written books; identifies the book the agent can read.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^bk_[a-z0-9_]{1,61}$"
+        }
+      }
+    },
+    "WorldTick": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ShardName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,31}$"
+    }
+  }
+}

@@ -1,0 +1,105 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.148'
+}
+
+// One Minecraft version is built at a time: -Pmc=<version> picks another than the default in gradle.properties.
+// Code that compiles against every version lives in src/; the game calls that differ live in versions/<mc>/src/.
+def mc = project.property('mc')
+def versionDir = file("versions/${mc}")
+if (!versionDir.directory) throw new GradleException("No versions/${mc} folder. Known: ${file('versions').list().sort().join(', ')}")
+def v = new Properties()
+file("${versionDir}/version.properties").withInputStream { v.load(it) }
+
+group = 'dev.geldar'
+version = "${mod_version}+mc${mc}"
+base.archivesName = 'geldar-core'
+java.toolchain.languageVersion = JavaLanguageVersion.of(v.java as int)
+layout.buildDirectory = file("build/${mc}")
+
+sourceSets {
+    main {
+        java.srcDir "${versionDir}/src/main/java"
+    }
+    // The game tests: loaded as part of the mod by the game-test run only, and never packed into the jar.
+    gametest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+configurations {
+    gametestImplementation.extendsFrom implementation
+    gametestCompileOnly.extendsFrom compileOnly
+}
+
+processResources {
+    def props = [mod_version: project.version, neoforge_range: v.neoforge_range, minecraft_range: v.minecraft_range]
+    inputs.properties props
+    filesMatching('META-INF/neoforge.mods.toml') { expand props }
+}
+
+repositories {
+    mavenCentral()
+    // BlueMap's API, for the agent skins and the live chat feed. The server provides BlueMap; it is never bundled.
+    maven { url = 'https://repo.bluecolored.de/releases'; content { includeGroup 'de.bluecolored' } }
+}
+
+neoForge {
+    version = v.neoforge_version
+    mods {
+        geldar_core { sourceSet sourceSets.main }
+        // The same mod with the game tests in it: one module, so the tests reach what is not public.
+        geldar_core_tested {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.gametest
+        }
+    }
+    runs {
+        server {
+            server()
+            gameDirectory = file(v.run_dir)
+            programArgument '--nogui'
+            loadedMods = [mods.geldar_core]
+        }
+        // Starts a world with the mod, runs the game tests in src/gametest against it and stops; a failed test fails
+        // the task. It asks for no EULA.
+        gameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = file("${v.run_dir}-gametest")
+            loadedMods = [mods.geldar_core_tested]
+        }
+    }
+    addModdingDependenciesTo(sourceSets.test)
+    addModdingDependenciesTo(sourceSets.gametest)
+}
+
+dependencies {
+    // The server has no NATS client, so the mod jar carries it (and the one library it needs) as nested jars.
+    jarJar(implementation("io.nats:jnats:${jnats_version}"))
+    jarJar(implementation("org.bouncycastle:bcprov-lts8on:${bcprov_version}"))
+
+    compileOnly("de.bluecolored:bluemap-api:${bluemap_api_version}") { transitive = false }
+    // flow-math's Vector3d, which BlueMap's markers take. BlueMap provides it at run time.
+    compileOnly "com.flowpowered:flow-math:1.0.3"
+
+    testImplementation("de.bluecolored:bluemap-api:${bluemap_api_version}") { transitive = false }
+    // The game pins its own slf4j, so the validator's newer one is left out.
+    testImplementation('com.networknt:json-schema-validator:3.0.8') { exclude group: 'org.slf4j' }
+    testImplementation 'org.junit.jupiter:junit-jupiter:6.1.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xmaxerrs', '500']
+}
+
+// The game tests are compiled with every build, so a change that breaks them shows at once.
+tasks.named('check') { dependsOn 'gametestClasses' }
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    // The tests check envelopes against Geldar's contract schemas, copied into the test resources.
+    systemProperty 'geldar.schemas', file('src/test/resources/schemas').absolutePath
+}

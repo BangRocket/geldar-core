@@ -1,0 +1,30 @@
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+modId = "geldar_core"
+version = "${mod_version}"
+displayName = "Geldar-Core"
+description = "Geldar's world rules and event export to NATS, for a NeoForge server."
+
+[[dependencies.geldar_core]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neoforge_range}"
+ordering = "NONE"
+side = "SERVER"
+
+[[dependencies.geldar_core]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_range}"
+ordering = "NONE"
+side = "SERVER"
+
+[[dependencies.geldar_core]]
+modId = "bluemap"
+type = "optional"
+versionRange = "*"
+ordering = "AFTER"
+side = "SERVER"
