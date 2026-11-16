@@ -83,6 +83,8 @@ These are outside the mod and have not been tried:
 
 ## Tests
 
+Every push and pull request is built by GitHub Actions, which runs both kinds of test below and keeps the jar.
+
 `gradlew test` runs the plugin's own tests for everything that holds no game types (467 of them, with the ones added
 here), and checks the events against Geldar's contract schemas, copied into `src/test/resources/schemas`. The plugin's
 listener tests used hand-written Bukkit doubles and are not carried over.
