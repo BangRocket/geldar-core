@@ -5,9 +5,14 @@ import com.google.gson.JsonObject;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 import com.mojang.authlib.properties.PropertyMap;
+import dev.geldar.core.blockowner.OwnerImport;
 import dev.geldar.core.blockowner.OwnerSource.OwnedBlock;
 import dev.geldar.core.blockowner.PlacementRecorder;
 import io.netty.channel.embedded.EmbeddedChannel;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,12 +41,15 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.CommonListenerCookie;
 import net.minecraft.server.permissions.PermissionSet;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.IEventBus;
@@ -77,6 +85,12 @@ public final class GameTests {
         test("deaths_are_told_nearby_only", 100, GameTests::deathsAreToldNearbyOnly);
         test("chat_reaches_by_distance", 600, GameTests::chatReachesByDistance);
         test("backfill_records_old_gravestones", 200, GameTests::backfillRecordsOldGravestones);
+        test("tilling_is_the_tillers", 100, GameTests::tillingIsTheTillers);
+        test("unlogged_changes_keep_the_owner", 100, GameTests::unloggedChangesKeepTheOwner);
+        test("pistons_take_ownership", 200, GameTests::pistonsTakeOwnership);
+        test("explosions_take_ownership", 100, GameTests::explosionsTakeOwnership);
+        test("bone_meal_growth_is_no_ones", 100, GameTests::boneMealGrowthIsNoOnes);
+        test("coreprotect_history_is_imported", 100, GameTests::coreProtectHistoryIsImported);
         FUNCTIONS.register(modBus);
         modBus.addListener(RegisterGameTestsEvent.class, GameTests::register);
     }
@@ -280,6 +294,137 @@ public final class GameTests {
         });
     }
 
+    private static void tillingIsTheTillers(Scene s) {
+        s.floor();
+        Mock farmer = s.join("ag_till_01", true, 0, 0);
+        BlockPos soil = s.base.offset(2, -1, 0);
+        s.level.setBlockAndUpdate(soil, Blocks.DIRT.defaultBlockState());
+        s.use(farmer, Items.WOODEN_HOE, soil, Direction.UP);
+        s.check(s.level.getBlockState(soil).is(Blocks.FARMLAND), "the hoe tilled the dirt");
+        OwnedBlock tilled = s.owner(soil);
+        s.check(tilled != null && "ag_till_01".equals(tilled.owner()) && "farmland".equals(tilled.block()),
+                "tilled farmland is the tiller's, as CoreProtect records it: " + tilled);
+        // Farmland that decays is a change CoreProtect does not log: the record stands and names farmland, which is
+        // what the Body's till looks for to treat the cell as no one's (Geldar's decision 0219).
+        s.level.setBlockAndUpdate(soil, Blocks.DIRT.defaultBlockState());
+        OwnedBlock decayed = s.owner(soil);
+        s.check(decayed != null && "ag_till_01".equals(decayed.owner()) && "farmland".equals(decayed.block()),
+                "decayed farmland keeps its record: " + decayed);
+        s.pass();
+    }
+
+    private static void unloggedChangesKeepTheOwner(Scene s) {
+        s.floor();
+        Mock builder = s.join("ag_copper_01", true, 0, 0);
+        BlockPos at = s.base.offset(2, 0, 0);
+        s.use(builder, Items.COPPER_BLOCK, at.below(), Direction.UP);
+        s.check(s.level.getBlockState(at).is(Blocks.COPPER_BLOCK), "the copper block stands");
+        // Weathering is a change no event tells and CoreProtect does not log: the owner stands, naming what was placed.
+        s.level.setBlockAndUpdate(at, Blocks.EXPOSED_COPPER.defaultBlockState());
+        OwnedBlock weathered = s.owner(at);
+        s.check(weathered != null && "ag_copper_01".equals(weathered.owner()) && "copper_block".equals(weathered.block()),
+                "weathered copper keeps its record: " + weathered);
+        // A cell left empty has lost its block, and the record goes with it.
+        s.level.setBlockAndUpdate(at, Blocks.AIR.defaultBlockState());
+        s.check(s.owner(at) == null, "an emptied cell has no owner");
+        s.level.setBlockAndUpdate(at, Blocks.COPPER_BLOCK.defaultBlockState());
+        s.check(s.owner(at) == null, "a block set there afterwards by no player has no owner");
+        s.pass();
+    }
+
+    private static void pistonsTakeOwnership(Scene s) {
+        s.floor();
+        Mock builder = s.join("ag_push_01", true, 0, 0);
+        BlockPos piston = s.base.offset(-3, 0, 2);
+        BlockPos first = piston.east();
+        BlockPos second = piston.east(2);
+        BlockPos third = piston.east(3);
+        s.place(builder, first);
+        s.place(builder, second);
+        s.check(s.owner(first) != null && s.owner(second) != null, "both stones are the builder's");
+        s.level.setBlockAndUpdate(piston, Blocks.PISTON.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.EAST));
+        s.level.setBlockAndUpdate(piston.west(), Blocks.REDSTONE_BLOCK.defaultBlockState());
+        s.poll(() -> s.level.getBlockState(third).is(Blocks.STONE), () -> {
+            // CoreProtect logs a piston's move under #piston, so where the stones came from and went to have no owner,
+            // though a stone stands again where the second one stood.
+            s.check(s.level.getBlockState(second).is(Blocks.STONE), "the first stone stands where the second stood");
+            s.check(s.owner(second) == null, "the cell a stone was pushed into has no owner: " + s.owner(second));
+            s.check(s.owner(third) == null, "the cell at the end of the push has no owner: " + s.owner(third));
+            s.check(s.owner(first) == null, "the cell the push started from has no owner: " + s.owner(first));
+            s.pass();
+        });
+    }
+
+    private static void explosionsTakeOwnership(Scene s) {
+        s.floor();
+        Mock builder = s.join("ag_boom_01", true, 0, 0);
+        BlockPos at = s.base.offset(0, 0, -3);
+        s.place(builder, at);
+        s.check(s.owner(at) != null, "the stone is the builder's");
+        s.level.explode(null, at.getX() + 0.5, at.getY() + 0.5, at.getZ() + 0.5, 4.0F, Level.ExplosionInteraction.TNT);
+        s.check(s.level.getBlockState(at).isAir(), "the explosion took the stone");
+        // Something that is no player's fills the crater before the Body reads the record: the cell is still no one's.
+        s.level.setBlockAndUpdate(at, Blocks.STONE.defaultBlockState());
+        s.check(s.owner(at) == null, "a cell an explosion emptied has no owner: " + s.owner(at));
+        s.pass();
+    }
+
+    private static void boneMealGrowthIsNoOnes(Scene s) {
+        s.floor();
+        Mock gardener = s.join("ag_grow_01", true, 0, 0);
+        BlockPos sapling = s.base.offset(-2, 0, -2);
+        s.clearBox(sapling.offset(-6, 0, -6), sapling.offset(6, 16, 6));
+        s.level.setBlockAndUpdate(sapling.below(), Blocks.DIRT.defaultBlockState());
+        s.use(gardener, Items.OAK_SAPLING, sapling.below(), Direction.UP);
+        s.check(s.level.getBlockState(sapling).is(Blocks.OAK_SAPLING), "the sapling is planted");
+        for (int i = 0; i < 40 && s.level.getBlockState(sapling).is(Blocks.OAK_SAPLING); i++) {
+            s.use(gardener, Items.BONE_MEAL, sapling, Direction.UP);
+        }
+        s.check(s.level.getBlockState(sapling).is(Blocks.OAK_LOG), "bone meal grew the sapling into a tree");
+        // CoreProtect logs no growth with tree growth off: the planted cell keeps the planter's record, naming the
+        // sapling, and the rest of the tree is no one's.
+        OwnedBlock trunk = s.owner(sapling);
+        s.check(trunk != null && "ag_grow_01".equals(trunk.owner()) && "oak_sapling".equals(trunk.block()),
+                "the planted cell keeps its record: " + trunk);
+        s.check(s.owner(sapling.above()) == null, "the tree bone meal grew is no one's: " + s.owner(sapling.above()));
+        s.pass();
+    }
+
+    private static void coreProtectHistoryIsImported(Scene s) {
+        s.floor();
+        Mock builder = s.join("ag_here_01", true, 0, 0);
+        // Set by no player on this server; the import says alice placed it on Paper.
+        BlockPos standing = s.base.offset(1, 0, -1);
+        // Named by the import, but its cell is empty here.
+        BlockPos gone = s.base.offset(2, 0, -1);
+        // Placed on this server after the move, so newer than anything the import knows.
+        BlockPos newer = s.base.offset(3, 0, -1);
+        s.level.setBlockAndUpdate(standing, Blocks.STONE.defaultBlockState());
+        s.place(builder, newer);
+        String world = Worlds.name(Compat.levelName(s.server), Compat.dimension(s.level));
+        Path file = s.server.getServerDirectory().resolve("gametest-owners.csv");
+        try {
+            Files.writeString(file, OwnerImport.HEADER + "\n"
+                    + exported(world, standing, "ag_alice_01") + exported(world, gone, "ag_alice_01")
+                    + exported(world, newer, "ag_alice_01") + "nowhere,0,64,0,ag_alice_01,minecraft:stone\n");
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        s.server.getCommands().performPrefixedCommand(s.server.createCommandSourceStack(),
+                GeldarCore.IMPORT_OWNERS + " gametest-owners.csv");
+        OwnedBlock imported = s.owner(standing);
+        s.check(imported != null && "ag_alice_01".equals(imported.owner()) && "stone".equals(imported.block()),
+                "the imported owner stands: " + imported);
+        s.check(s.owner(gone) == null, "an imported owner of an empty cell is not laid in: " + s.owner(gone));
+        OwnedBlock kept = s.owner(newer);
+        s.check(kept != null && "ag_here_01".equals(kept.owner()), "a newer owner here is kept: " + kept);
+        s.pass();
+    }
+
+    private static String exported(String world, BlockPos at, String user) {
+        return world + "," + at.getX() + "," + at.getY() + "," + at.getZ() + "," + user + ",minecraft:stone\n";
+    }
+
     private static String line(SignBlockEntity sign, int index) {
         return sign.getFrontText().getMessage(index, false).getString();
     }
@@ -385,10 +530,21 @@ public final class GameTests {
 
         /** The player sets a stone block at {@code at}, as a click on the block below does. */
         void place(Mock mock, BlockPos at) {
-            ItemStack stack = new ItemStack(Items.STONE);
+            use(mock, Items.STONE, at.below(), Direction.UP);
+        }
+
+        /** The player uses {@code item} on one face of the block at {@code on}, as a right click does. */
+        void use(Mock mock, Item item, BlockPos on, Direction face) {
+            ItemStack stack = new ItemStack(item);
             mock.player().setItemInHand(InteractionHand.MAIN_HAND, stack);
-            BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(at.below()).add(0, 0.5, 0), Direction.UP, at.below(), false);
-            stack.useOn(new UseOnContext(level, mock.player(), InteractionHand.MAIN_HAND, stack, hit));
+            Vec3 at = Vec3.atCenterOf(on).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
+            stack.useOn(new UseOnContext(level, mock.player(), InteractionHand.MAIN_HAND, stack,
+                    new BlockHitResult(at, face, on, false)));
+        }
+
+        /** Takes away everything in the box between two corners when the test ends. */
+        void clearBox(BlockPos from, BlockPos to) {
+            BlockPos.betweenClosed(from, to).forEach(at -> toClear.add(at.immutable()));
         }
 
         /** The owner record of one block as the Body's queries would read it, or null when it has none. */
