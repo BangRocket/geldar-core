@@ -1,0 +1,47 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mc: ['26.1']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # Gradle runs on this one and fetches the JDK each Minecraft version compiles with.
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Compiles, runs the unit tests and makes the jar a server loads.
+      - name: Build
+        run: ./gradlew build --no-daemon -Pmc=${{ matrix.mc }}
+
+      # Starts a NeoForge server with the mod and runs the game tests in its world. It needs no EULA.
+      - name: Game tests
+        run: ./gradlew runGameTestServer --no-daemon -Pmc=${{ matrix.mc }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: geldar-core-jar-mc${{ matrix.mc }}
+          path: build/${{ matrix.mc }}/libs/geldar-core-*.jar
+          if-no-files-found: error
