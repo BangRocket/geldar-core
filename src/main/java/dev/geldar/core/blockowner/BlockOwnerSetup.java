@@ -12,7 +12,7 @@ import java.util.logging.Logger;
 
 /**
  * Wires block ownership: the {@link OwnerLedger} as the owner source, the lookup thread, the chunk cache, the change
- * listener, the batched change publisher and the NATS query link. Settings: {@code blockowner.enabled} (default true;
+ * listener, the batched change publisher, the NATS query link and the import of a Paper shard's CoreProtect history. Settings: {@code blockowner.enabled} (default true;
  * false stops the change events and the replies, while the ledger goes on recording) and
  * {@code blockowner.lookup_timeout_ms} (default 2000).
  */
@@ -28,16 +28,26 @@ public final class BlockOwnerSetup implements AutoCloseable {
     private final LookupDebugLog debug;
     private final PlacementRecorder placements;
     private final OwnerSource source;
+    private final OwnerImporter importer;
     private volatile boolean enabled = true;
 
     private BlockOwnerSetup(ExecutorService lookups, NatsBlockOwnerLink link, OwnerQueryService service,
-            LookupDebugLog debug, PlacementRecorder placements, OwnerSource source) {
+            LookupDebugLog debug, PlacementRecorder placements, OwnerSource source, OwnerImporter importer) {
         this.lookups = lookups;
         this.link = link;
         this.service = service;
         this.debug = debug;
         this.placements = placements;
         this.source = source;
+        this.importer = importer;
+    }
+
+    /**
+     * Imports owners exported from a Paper shard's CoreProtect database ({@code tools/coreprotect-owners.sql}) and
+     * returns the line to answer with. Server thread.
+     */
+    public String importOwners(java.nio.file.Path file) {
+        return importer.importFile(file);
     }
 
     /** Records the blocks the mod places itself (gravestones) as owned by the system (decision 0195). */
@@ -68,11 +78,15 @@ public final class BlockOwnerSetup implements AutoCloseable {
         NatsBlockOwnerLink link = new NatsBlockOwnerLink(natsUrl, shard, env, log);
         BlockOwnerPublisher publisher = new BlockOwnerPublisher(link::changed, log);
         PlacementRecorder placements = new PlacementRecorder(cache, publisher, Optional.of(ledger), log);
-        BlockOwnerSetup setup = new BlockOwnerSetup(lookups, link, service, debug, placements, source);
+        OwnerImporter importer = new OwnerImporter(host, ledger);
+        BlockOwnerSetup setup = new BlockOwnerSetup(lookups, link, service, debug, placements, source, importer);
         BlockOwnerResponder responder = new BlockOwnerResponder(service, link, () -> setup.enabled);
         link.start(responder::receive);
         host.listen(new BlockChangeListener(host, ledger, cache, publisher, () -> setup.enabled));
         host.every(1, publisher::flush);
+        host.listen(importer);
+        host.every(1, importer::applyQueued);
+        importer.start();
         setup.reload(host.settings());
         return setup;
     }
@@ -87,6 +101,7 @@ public final class BlockOwnerSetup implements AutoCloseable {
 
     @Override
     public void close() {
+        importer.stop();
         lookups.shutdownNow();
         link.close();
     }

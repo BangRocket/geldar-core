@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -55,6 +56,8 @@ public final class GeldarCore {
     static final Path PROC_STAT = Path.of("/proc/self/stat");
     /** The settings file is read again this often, in ticks (5 s). */
     static final int RELOAD_TICKS = 100;
+    /** The console command that imports a Paper shard's CoreProtect history. */
+    static final String IMPORT_OWNERS = "geldar-import-owners";
 
     /**
      * Makes the event publisher. The game tests put one that keeps its events in its place, before the server starts;
@@ -110,6 +113,18 @@ public final class GeldarCore {
 
     @SubscribeEvent
     public void commands(RegisterCommandsEvent event) {
+        // geldar-import-owners <file>: owners exported from a Paper shard's CoreProtect database, read from a path
+        // relative to the server's folder. Console or RCON only, as the backfill is.
+        event.getDispatcher().register(Commands.literal(IMPORT_OWNERS).requires(Compat.consoleOnly())
+                .then(Commands.argument("file", StringArgumentType.greedyString()).executes(context -> {
+                    Running now = running;
+                    String file = StringArgumentType.getString(context, "file");
+                    String reply = now == null || now.blockOwner == null
+                            ? "Geldar-Core is not running."
+                            : now.blockOwner.importOwners(now.server.getServerDirectory().resolve(file));
+                    context.getSource().sendSuccess(() -> Component.literal(reply), false);
+                    return 1;
+                })));
         event.getDispatcher().register(Commands.literal(GraveBackfillCommand.NAME).requires(Compat.consoleOnly())
                 .executes(context -> {
                     Running now = running;
